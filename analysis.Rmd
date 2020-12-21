@@ -1,7 +1,7 @@
 ---
-title: "Title of Analysis Goes Here"
-author: "Your Name (netid@illinois.edu)"
-date: "Insert Date Here"
+title: "Does balancing dataset improve accuracy?"
+author: "Tiffany Lu (tlu17@illinois.edu)"
+date: "2020/11/17"
 output:
   html_document: 
     theme: default
@@ -14,6 +14,10 @@ knitr::opts_chunk$set(echo = FALSE, fig.align = 'center')
 
 ```{r, load-packages, include = FALSE}
 # load packages
+library("DMwR")
+library(pROC)
+library(PRROC)
+library(DescTools)
 ```
 
 ```{r make-data, warning = FALSE, message = FALSE}
@@ -34,43 +38,134 @@ cc_sub = data.table::fread("data/cc-sub.csv")
 ***
 
 ## Abstract
-
-> Abstract text goes here.
+Identifying frauds with machine learning has been an useful tool in asisting and protecting customers' finance and identity. However, most fraud data are not balanced - meaning that there are always more "normal" data than "fraud data". In fact, such data are very skewed and can cause many bias to happen within the machine learning lifecycle. In our analysis, we used SMOTE (Synthetic Minority Oversampling Technique) to balance the dataset and compared the result to the normal logistic model. We found that the SMOTE model gives us a higher recall but about the same area under the precision-recall curve (AUPRC). 
 
 ***
 
 ## Introduction
-
-Write your introduction here.
+Major credit card companies build models to identify frauds in transactions so to protect customer rights and finance. Frauds has always been an issue going on, well before transactions moved online. However, compared to the number of total transactions, the number of frauds is very small. This could pose many problems when we try to build a model to predict and identify fraud transactions as the data itself is biased towards genuine transations. Imagine a model that does not take in any features and it always classify transactions as "genuine". If only 0.1% of the transactions are fraud, this zero-feature model will have a prediction accuracy of 99.9%! Therefore, we want to build a model that has high recall rate and a good area under the precision recall curve. To do so, we first constructed a base logistic model using the original data. Then, we tried Synthetic Minority Oversampling Technique (SMOTE) to both downsample and upsample the original dataset and feed it to logistic model. 
 
 ***
 
 ## Methods
-
-Describe the methods used in this section.
-
 ### Data
-
-Specifically describe the data and how it is used here.
+The credit fraud dataset (cc) is from Kaggle (https://www.kaggle.com/mlg-ulb/creditcardfraud) and is collected by Worldline and Machine Learning Group of Universite Libre de Bruxelles. Based on Kaggle, it "contains transactions made by credit cards in September 2013 by european cardholders". The variable "Class" is our reponse variable, and it will label a transaction as "fraud" or "genuine". This dataset has 284807 observations and 31 variables, and more details can be found in the appendix. There are no missing data in the dataset; however, the data is inbalanced. Almost all of the observations are not frauds, while only 0.172% of all data is frauds. In this analysis, we will define the "fraud" class as positive and "genuine" class as negative. 
+```{r include = FALSE}
+sum(!complete.cases(cc))
+```
+```{r include = FALSE}
+#convert class to factor
+cc$Class = as.factor(cc$Class)
+cc_sub$Class = as.factor(cc_sub$Class)
+print(sum(cc_sub$Class=="fraud"))
+print(sum(cc_sub$Class!="fraud"))
+```
+```{r}
+#plot distribution
+barplot(table(cc$Class), ylab="Frequency")
+```
 
 ### Modeling
+We split the credit fraud data into 8:2 training and testing. 
+```{r include = FALSE}
+set.seed(0)
+trn_idx = sample(nrow(cc), size = 0.8 * nrow(cc))
+cc_trn = cc[trn_idx, ]
+cc_tst = cc[-trn_idx, ]
+```
 
-Discuss your modeling and validation strategy here.
+We want to make sure that the training and testing data has an similar proportion of fraud and genuine transactions. Our training dataset has 0.18% fraud instances and our testing dataset has 0.15% fraud instances, which is good. 
+```{r include = FALSE}
+trainstats = table(cc_trn$Class)
+trainstats[1]/trainstats[2]
+```
+```{r include = FALSE}
+teststats = table(cc_tst$Class)
+teststats[1]/teststats[2]
+```
+Now we will first set up a simple logistic model as our baseline. This model uses Class as the response variable and the rest of the variables as features. 
+```{r}
+basemodel = glm(Class~., data=cc_trn, family="binomial")
+```
+
+
+Now, since this dataset is unbalanced, we will use SMOTE, or Synthetic Minority Oversampling Technique, to generate a second model that would accurately identify frauds. SMOTE tries to generate synthetic data that mimics the minority class based on k nearest neighbors. In this way, we can get a dataset of more equal occurrences of both classes. The SMOTE library in R allows us to upsample the minority class and to also downsample the majority class. 
+
+To balance the number of classes, we want to double number of fraud case and get only half of the genuine case. Now in the new data, we have about the same number of frauds and genuine transactions. 
+```{r}
+set.seed(0)
+```
+
+```{r}
+newdata = SMOTE(Class~., data=cc_trn, perc.over=100, perc.under=200)
+newdata$Class = as.factor(newdata$Class)
+barplot(table(newdata$Class), ylab="Frequency")
+```
+Again, we fit the SMOTE data to a logistic model using Class as response and all other variables as features. 
+```{r include = FALSE}
+logModel = glm(Class~., data=newdata, family="binomial")
+```
 
 ***
 
 ## Results
+For the base model of a simple logistic regression with the unbalanced data, we obtained an area under precision-recall curve (AUPRC) of 0.9999934 and a recall of 0.7590361. 
 
-State your results here.
+We evaluate the accuracy of our model by the area under the precision-recall curve (AUPRC). We do not consider using the proportion of correct class predictions because our data is heavily skewed. Let us say that we have a model that will always predict the transaction is genuine no matter what data is feed into it. Then we will get a very high "accuracy" of 98.83% since almost all transactions are genuine. 
+
+```{r}
+baseprob = predict(basemodel, cc_tst, type="response")
+baseclass = ifelse(baseprob>0.5, "genuine", "fraud")
+```
+```{r}
+basefraud = baseprob[cc_tst$Class=="fraud"]
+basegenuine = baseprob[cc_tst$Class=="genuine"]
+basepr = pr.curve(scores.class0 = basegenuine, scores.class1 = basefraud, curve = T)
+plot(basepr)
+```
+```{r include = FALSE}
+get_sensitivity = function(actual, classification, positive=1, negative=0){
+  #TP/P
+  actualPositive = classification[actual==positive]
+  TP = sum(actualPositive==positive)
+  return(TP/length(actualPositive))
+}
+
+get_sensitivity(cc_tst$Class, baseclass, "fraud", "genuine")
+```
+For our second model with SMOTE, we obtained a AUPRC of 0.9986524 and a recall of 0.7590361. 
+```{r}
+prediction = predict(logModel, cc_tst, type="response")
+classes2 = ifelse(prediction>0.5, "genuine", "fraud")
+```
+
+```{r}
+fraud = prediction[cc_sub$Class=="fraud"]
+genuine = prediction[cc_sub$Class=="genuine"]
+pr = pr.curve(scores.class0 = genuine, scores.class1 = fraud, curve = T)
+plot(pr)
+```
+```{r include = FALSE}
+get_sensitivity(cc_tst$Class, classes2, "fraud", "genuine")
+```
 
 ***
 
 ## Discussion
+The AUPRC is very high for both the original baseline model (AUPRC=0.9999934) and the SMOTE model (AUPRC = 0.9986542), with the SMOTE model's AUPRC slightly lower. In the case of recall, we found a significant increase in recall from the baseline model(recall = 0.7590361) to the SMOTE model (recall = 0.9759036). This shows that the SMOTE model is better at predicting frauds than the normal model. We would rather identify a non-fraud transaction as a fraud than to identify a fraud-transaction as non-fraud. Therefore, recall is the measurement that we want to focus on. 
 
-Discuss your results here.
+SMOTE have a drawback: it is very prone to overfitting as we are up-sampling the minority. 
+However, it is less prone to overfitting compared to the normal way of replicating minority datas because SMOTE actually give us simulated data that are not replications of the original data. By using up-sampling of minority class and down-sampling of majority class, we get quite good results. However, since we did not do any cross validation for the SMOTE model as we are generating different "samples", the AUPRC might have some variations. 
+
+When training the logistic model SMOTE dataset, we get a warning: "glm.fit: algorithm did not convergeglm.fit: fitted probabilities numerically 0 or 1 occurred". It might be that the variables are not linearly dependent and is not classifiable. More work can be done on feature selection to resolve this problem. 
 
 ***
 
 ## Appendix
+The credit fraud transation is from Kaggle (https://www.kaggle.com/mlg-ulb/creditcardfraud). It consists of 31 features listed below: 
 
-Place potential additional information here.
+Time - Number of seconds elapsed between this transaction and the first transaction in the dataset
+
+V1, V2, ... V28 - result of PCA Dimensionality reduction 
+
+Amount - transaction amount
