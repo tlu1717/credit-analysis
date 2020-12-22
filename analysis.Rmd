@@ -1,6 +1,6 @@
 ---
 title: "Does balancing dataset improve accuracy?"
-author: "Tiffany Lu (tlu17@illinois.edu)"
+author: ""
 date: "2020/11/17"
 output:
   html_document: 
